@@ -50,7 +50,7 @@ services:
       - PMA_PORT=3306
       - UPLOAD_LIMIT=64M     # <-- use a unit and quote if using YAML key:value form
       - MEMORY_LIMIT=256M
-    ports:
+    #ports:
       - "8080:80"
     depends_on:
       db:
