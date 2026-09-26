@@ -1,9 +1,10 @@
-"""Combine the existing QR and invisible-text methods in one PDF.
+"""Combine QR, invisible-text, and coordinate-distance watermark layers.
 
 This module does not register a method or change any HTTP endpoints.
 """
 from invisible_text import InvisibleText
 from redundant_qr import RedundantQRWatermark
+from distance_watermarking import DistanceWatermarking
 from watermarking_method import (
     PdfSource,
     SecretNotFoundError,
@@ -19,14 +20,15 @@ class CombinedWatermark(WatermarkingMethod):
     def __init__(self):
         self.qr = RedundantQRWatermark()
         self.invisible = InvisibleText()
+        self.distance = DistanceWatermarking()
 
     @staticmethod
     def get_usage() -> str:
         return (
-            "Redundant QR codes and invisible text on every page. "
+            "Redundant QR codes, invisible text, and coordinate-distance marks. "
             "Secret: 1–100 UTF-8 bytes. A non-empty key is required. "
             "Position controls QR placement: all, corners, or center. "
-            "Reading requires a readable QR code to verify the key."
+            "Reading verifies all three layers and the QR key."
         )
 
     def is_watermark_applicable(self, pdf: PdfSource, position: str | None = None) -> bool:
@@ -34,6 +36,7 @@ class CombinedWatermark(WatermarkingMethod):
         return (
             self.invisible.is_watermark_applicable(data)
             and self.qr.is_watermark_applicable(data, position)
+            and self.distance.is_watermark_applicable(data, position)
         )
 
     def add_watermark(
@@ -47,18 +50,17 @@ class CombinedWatermark(WatermarkingMethod):
         if not self.is_watermark_applicable(data, position):
             raise WatermarkingError("Both watermarking methods must be applicable")
 
-        # Feed the first method's output into the second, preserving both layers.
+        # Apply each existing implementation in sequence without changing it.
         data = self.qr.add_watermark(data, secret, key, position)
-        return self.invisible.add_watermark(data, secret, key)
+        data = self.invisible.add_watermark(data, secret, key)
+        return self.distance.add_watermark(data, secret, key, position)
 
     def read_secret(self, pdf: PdfSource, key: str) -> str:
         data = load_pdf_bytes(pdf)
         # InvisibleText ignores the key: never use it to bypass QR verification.
         secret = self.qr.read_secret(data, key)
-        try:
-            text_secret = self.invisible.read_secret(data, key)
-        except SecretNotFoundError:
-            return secret
-        if text_secret != secret:
-            raise WatermarkingError("QR and invisible-text watermarks disagree")
+        text_secret = self.invisible.read_secret(data, key)
+        distance_secret = self.distance.read_secret(data, key)
+        if text_secret != secret or distance_secret != secret:
+            raise WatermarkingError("Watermark layers disagree")
         return secret

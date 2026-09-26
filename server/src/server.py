@@ -45,6 +45,7 @@ def create_app():
     for name in (
         "RMAP_SERVER_PUBLIC_KEY_PATH", "RMAP_SERVER_PRIVATE_KEY_PATH",
         "RMAP_CLIENT_KEYS_DIR", "RMAP_SERVER_KEY_PASSPHRASE", "RMAP_DOCUMENT_ID",
+        "RMAP_WATERMARK_KEY",
     ):
         app.config[name] = os.environ.get(name)
     rmap_init_lock = Lock()
@@ -52,6 +53,8 @@ def create_app():
     def get_rmap_service():
         # Lazy loading leaves existing routes usable without RMAP configuration.
         with rmap_init_lock:
+            if not isinstance(app.config["RMAP_WATERMARK_KEY"], str) or not app.config["RMAP_WATERMARK_KEY"]:
+                raise ValueError("RMAP watermark key is required")
             if "rmap" not in app.extensions:
                 app.extensions["rmap"] = RMAPService(app.config)
             return app.extensions["rmap"]
@@ -694,8 +697,10 @@ def create_app():
 
     def publish_rmap_version(doc_id, identity, link):
         result, status = create_version(
-            doc_id, "invisible-text", identity, None,
-            secrets.token_hex(16), "", rmap_link=link,
+            doc_id, "combined-watermark", identity, None,
+            # Keep the QR payload readable; its encoded envelope is much
+            # longer than the embedded secret itself. The RMAP link is unchanged.
+            secrets.token_hex(8), app.config["RMAP_WATERMARK_KEY"], rmap_link=link,
         )
         if status != 201:
             raise RMAPPublicationError()

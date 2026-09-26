@@ -27,8 +27,7 @@ To enable the richer exploration, install PyMuPDF:
 
 """
 from __future__ import annotations
-from invisible_text import InvisibleText
-from redundant_qr import RedundantQRWatermark
+from combined_watermark import CombinedWatermark
 
 from typing import Any, Dict, Final, Iterable, List, Mapping
 import base64
@@ -39,7 +38,6 @@ import os
 import re
 
 
-from invisible_text import InvisibleText
 from distance_watermarking import DistanceWatermarking
 
 from watermarking_method import (
@@ -47,19 +45,13 @@ from watermarking_method import (
     WatermarkingMethod,
     load_pdf_bytes,
 )
-from add_after_eof import AddAfterEOF
-from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
 
 # --------------------
 # Method registry
 # --------------------
 
 METHODS: Dict[str, WatermarkingMethod] = {
-    AddAfterEOF.name: AddAfterEOF(),
-    UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
-    InvisibleText.name: InvisibleText(),
-    DistanceWatermarking.name: DistanceWatermarking(),
-    RedundantQRWatermark.name: RedundantQRWatermark(),
+    CombinedWatermark.name: CombinedWatermark(),
 }
 
 """Registry of available watermarking methods.
