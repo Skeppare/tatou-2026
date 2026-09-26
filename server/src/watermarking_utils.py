@@ -58,11 +58,8 @@ METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
     UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
     InvisibleText.name: InvisibleText(),
-<<<<<<< HEAD
     DistanceWatermarking.name: DistanceWatermarking(),
-=======
     RedundantQRWatermark.name: RedundantQRWatermark(),
->>>>>>> ad24407d29d79df1d13f0de859ec4bc90f972864
 }
 
 """Registry of available watermarking methods.
