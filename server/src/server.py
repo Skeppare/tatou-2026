@@ -1,7 +1,9 @@
 import os
 import io
 import hashlib
+import secrets
 import datetime as dt
+from threading import Lock
 from pathlib import Path
 from functools import wraps
 
@@ -22,6 +24,8 @@ except Exception:  # dill is optional
 
 import watermarking_utils as WMUtils
 from watermarking_method import WatermarkingMethod
+from rmap_service import RMAPService, InvalidRMAPMessage
+from rmap import RMAPError
 #from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
 
 def create_app():
@@ -37,6 +41,20 @@ def create_app():
     app.config["DB_HOST"] = os.environ.get("DB_HOST", "db")
     app.config["DB_PORT"] = int(os.environ.get("DB_PORT", "3306"))
     app.config["DB_NAME"] = os.environ.get("DB_NAME", "tatou")
+
+    for name in (
+        "RMAP_SERVER_PUBLIC_KEY_PATH", "RMAP_SERVER_PRIVATE_KEY_PATH",
+        "RMAP_CLIENT_KEYS_DIR", "RMAP_SERVER_KEY_PASSPHRASE", "RMAP_DOCUMENT_ID",
+    ):
+        app.config[name] = os.environ.get(name)
+    rmap_init_lock = Lock()
+
+    def get_rmap_service():
+        # Lazy loading leaves existing routes usable without RMAP configuration.
+        with rmap_init_lock:
+            if "rmap" not in app.extensions:
+                app.extensions["rmap"] = RMAPService(app.config)
+            return app.extensions["rmap"]
 
     app.config["STORAGE_DIR"].mkdir(parents=True, exist_ok=True)
 
@@ -548,6 +566,10 @@ def create_app():
         if not method or not intended_for or not isinstance(secret, str) or not isinstance(key, str):
             return jsonify({"error": "method, intended_for, secret, and key are required"}), 400
 
+        return create_version(doc_id, method, intended_for, position, secret, key)
+
+    def create_version(doc_id, method, intended_for, position, secret, key, *, rmap_link=None):
+        """Shared watermark/Versions pipeline; RMAP supplies its protocol link."""
         # lookup the document; enforce ownership
         try:
             with get_engine().connect() as conn:
@@ -612,17 +634,23 @@ def create_app():
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         candidate = f"{base_name}__{intended_slug}.pdf"
+        if rmap_link is not None:
+            candidate = f"rmap_{rmap_link}.pdf"
         dest_path = dest_dir / candidate
 
         # write bytes
+        created = False
         try:
-            with dest_path.open("wb") as f:
+            with dest_path.open("xb" if rmap_link is not None else "wb") as f:
+                created = True
                 f.write(wm_bytes)
         except Exception as e:
+            if rmap_link is not None and created:
+                dest_path.unlink(missing_ok=True)
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
 
         # link token = sha1(watermarked_file_name)
-        link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
+        link_token = rmap_link if rmap_link is not None else hashlib.sha1(candidate.encode("utf-8")).hexdigest()
 
         try:
             with get_engine().begin() as conn:
@@ -638,7 +666,7 @@ def create_app():
                         "secret": secret,
                         "method": method,
                         "position": position or "",
-                        "path": dest_path
+                        "path": str(dest_path)
                     },
                 )
                 vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
@@ -660,6 +688,43 @@ def create_app():
             "filename": candidate,
             "size": len(wm_bytes),
         }), 201
+
+    class RMAPPublicationError(Exception):
+        pass
+
+    def publish_rmap_version(doc_id, identity, link):
+        result, status = create_version(
+            doc_id, "invisible-text", identity, None,
+            secrets.token_hex(16), "", rmap_link=link,
+        )
+        if status != 201:
+            raise RMAPPublicationError()
+
+    def handle_rmap(initiate):
+        try:
+            service = get_rmap_service()
+        except Exception:
+            return jsonify({"error": "RMAP is not configured correctly"}), 503
+        try:
+            message = request.get_json(silent=True)
+            response = (service.initiate(message) if initiate else
+                        service.get_link(message, publish_rmap_version))
+            return jsonify(response), 200
+        except (RMAPError, InvalidRMAPMessage, KeyError, TypeError, ValueError):
+            return jsonify({"error": "Invalid RMAP message or session"}), 400
+        except Exception:
+            # Never return prepared ciphertext if PDF creation/commit fails.
+            return jsonify({"error": "RMAP request could not be completed"}), 503
+
+    @app.post("/api/rmap-initiate")
+    @app.post("/rmap-initiate")
+    def rmap_initiate():
+        return handle_rmap(True)
+
+    @app.post("/api/rmap-get-link")
+    @app.post("/rmap-get-link")
+    def rmap_get_link():
+        return handle_rmap(False)
         
         
     # @app.post("/api/load-plugin")
