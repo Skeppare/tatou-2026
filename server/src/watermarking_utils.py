@@ -27,6 +27,8 @@ To enable the richer exploration, install PyMuPDF:
 
 """
 from __future__ import annotations
+from invisible_text import InvisibleText
+from redundant_qr import RedundantQRWatermark
 
 from typing import Any, Dict, Final, Iterable, List, Mapping
 import base64
@@ -55,6 +57,7 @@ METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
     UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
     InvisibleText.name: InvisibleText(),
+    RedundantQRWatermark.name: RedundantQRWatermark(),
 }
 
 """Registry of available watermarking methods.
