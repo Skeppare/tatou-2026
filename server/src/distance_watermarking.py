@@ -10,7 +10,6 @@ from watermarking_method import (
     load_pdf_bytes,
 )
 
-
 class DistanceWatermarking(WatermarkingMethod):
     name = "watermark_marcus"
 
@@ -38,9 +37,7 @@ class DistanceWatermarking(WatermarkingMethod):
     @staticmethod
     def get_usage() -> str:
         return (
-            "Embeds an invisible coordinate-based watermark on the first page. "
-            "A key is required for deterministic coordinate generation. "
-            "Secret must contain 1-100 UTF-8 bytes. Position is ignored."
+            "watermarking added"
         )
 
     @staticmethod
@@ -55,13 +52,6 @@ class DistanceWatermarking(WatermarkingMethod):
 
     @classmethod
     def _make_y_positions(cls, page_height: float, key: str) -> list[float]:
-        """
-        Generate deterministic, non-colliding Y positions.
-
-        Instead of repeatedly calling random.uniform(), we create fixed
-        Y slots and shuffle them using the key. This prevents two encoded
-        bits from accidentally receiving almost the same Y coordinate.
-        """
         start = cls.Y_MARGIN
         end = page_height - cls.Y_MARGIN
 
@@ -154,9 +144,9 @@ class DistanceWatermarking(WatermarkingMethod):
         with pymupdf.open(stream=data, filetype="pdf") as doc:
             if doc.page_count < 1:
                 raise ValueError("PDF has no pages")
-
+            
             if doc.needs_pass:
-                raise ValueError("Password-protected PDFs are not supported")
+                raise ValueError("PDFs protectedd by password are not supported")
 
             page = doc[0]
 
@@ -174,20 +164,16 @@ class DistanceWatermarking(WatermarkingMethod):
 
             for index, bit in enumerate(bits):
                 y_pos = y_positions[index]
-
                 if bit == "0":
                     x_pos = self.X_ZERO
                 else:
                     x_pos = self.X_ONE
-
-                # render_mode=3 = invisible text.
                 page.insert_text(
                     (x_pos, y_pos),
                     ".",
                     fontsize=2,
                     render_mode=3,
                 )
-
             return doc.tobytes(
                 deflate=True,
                 no_new_id=True,
@@ -222,7 +208,6 @@ class DistanceWatermarking(WatermarkingMethod):
                     for span in line.get("spans", []):
                         text = span.get("text", "")
 
-                        # Only our marker character is interesting.
                         if text != ".":
                             continue
 
@@ -234,7 +219,6 @@ class DistanceWatermarking(WatermarkingMethod):
                         x_coord = float(origin[0])
                         y_coord = float(origin[1])
 
-                        # Ignore ordinary periods elsewhere in the PDF.
                         near_zero = (
                             abs(x_coord - self.X_ZERO)
                             <= self.X_TOLERANCE
