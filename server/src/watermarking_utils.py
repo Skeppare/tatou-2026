@@ -28,6 +28,8 @@ To enable the richer exploration, install PyMuPDF:
 """
 from __future__ import annotations
 from combined_watermark import CombinedWatermark
+from invisible_text import InvisibleText
+from redundant_qr import RedundantQRWatermark
 
 from typing import Any, Dict, Final, Iterable, List, Mapping
 import base64
@@ -51,6 +53,9 @@ from watermarking_method import (
 # --------------------
 
 METHODS: Dict[str, WatermarkingMethod] = {
+    InvisibleText.name: InvisibleText(),
+    RedundantQRWatermark.name: RedundantQRWatermark(),
+    DistanceWatermarking.name: DistanceWatermarking(),
     CombinedWatermark.name: CombinedWatermark(),
 }
 
