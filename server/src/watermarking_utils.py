@@ -38,6 +38,7 @@ import re
 
 
 from invisible_text import InvisibleText
+from distance_watermarking import DistanceWatermarking
 
 from watermarking_method import (
     PdfSource,
@@ -55,6 +56,7 @@ METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
     UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
     InvisibleText.name: InvisibleText(),
+    DistanceWatermarking.name: DistanceWatermarking(),
 }
 
 """Registry of available watermarking methods.
