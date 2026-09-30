@@ -13,3 +13,12 @@ def test_delete_document_requires_authentication():
     resp = client.delete("/api/delete-document/1")
 
     assert resp.status_code == 401
+
+    def test_get_document_requires_authentication():
+    client = app.test_client()
+
+    resp = client.get("/api/get-document/1")
+
+    assert resp.status_code == 401
+    assert resp.is_json
+    assert resp.get_json()["error"] == "Missing or invalid Authorization header"
