@@ -488,8 +488,12 @@ def create_app():
         try:
             with get_engine().connect() as conn:
 
-                query = text("SELECT * FROM Documents WHERE id = :id")
-                row = conn.execute(query, {"id": int(doc_id)}).first()
+                query = text("""
+                SELECT * 
+                FROM Documents 
+                WHERE id = :id AND ownerid = :uid
+                """)
+                row = conn.execute(query, {"id": int(doc_id), "uid": int(g.user["id"])}).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
