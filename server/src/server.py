@@ -854,7 +854,7 @@ def create_app():
                         FROM Documents
                         WHERE id = :id AND ownerid = :uid
                     """),
-                    {"id": doc_id},
+                    {"id": doc_id, "uid": int(g.user["id"])},
                 ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
