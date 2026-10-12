@@ -546,15 +546,17 @@ def create_app():
             document_id = (
                 request.args.get("id")
                 or request.args.get("documentid")
-                or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
             )
+            if not document_id:
+                body = request.get_json(silent=True)
+                if not isinstance(body, dict):
+                    return jsonify({"error": "JSON body must be an object"}), 400
+                document_id = body.get("id")
         try:
             doc_id = document_id
         except (TypeError, ValueError):
             return jsonify({"error": "document id required"}), 400
-            
-        payload = request.get_json(silent=True) or {}
-        # allow a couple of aliases for convenience
+     
         method = payload.get("method")
         intended_for = payload.get("intended_for")
         position = payload.get("position") or None
