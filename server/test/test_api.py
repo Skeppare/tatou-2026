@@ -1,3 +1,4 @@
+from itsdangerous import URLSafeTimedSerializer
 from server import app
 
 def test_healthz_route():
@@ -7,7 +8,6 @@ def test_healthz_route():
     assert resp.status_code == 200
     assert resp.is_json
     
-
 def test_delete_document_requires_authentication():
     client = app.test_client()
 
@@ -24,7 +24,6 @@ def test_get_document_requires_authentication():
     assert resp.is_json
     assert resp.get_json()["error"] == "Missing or invalid Authorization header"
 
-from itsdangerous import URLSafeTimedSerializer
 
 def test_create_watermark_rejects_invalid_json():
     serializer = URLSafeTimedSerializer(
@@ -47,6 +46,8 @@ def test_create_watermark_rejects_invalid_json():
 
     assert response.status_code == 400
     assert response.get_json()["error"] == "JSON body must be an object"
+
+
 def test_create_watermark_body_id_rejects_invalid_json():
     serializer = URLSafeTimedSerializer(
         app.config["SECRET_KEY"],
@@ -67,4 +68,3 @@ def test_create_watermark_body_id_rejects_invalid_json():
 
     assert response.status_code == 400
     assert response.get_json()["error"] == "JSON body must be an object"
-

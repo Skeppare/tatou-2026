@@ -3,6 +3,8 @@ import io
 import hashlib
 import secrets
 import datetime as dt
+import logging
+logger = logging.getLogger("tatou.security")
 from threading import Lock
 from pathlib import Path
 from functools import wraps
@@ -87,15 +89,33 @@ def create_app():
         def wrapper(*args, **kwargs):
             auth = request.headers.get("Authorization", "")
             if not auth.startswith("Bearer "):
+                logger.warning(
+                    "auth_failure reason=missing_or_invalid_header ip=%s path=%s",
+                    request.remote_addr, request.path
+                )
                 return _auth_error("Missing or invalid Authorization header")
+
             token = auth.split(" ", 1)[1].strip()
             try:
                 data = _serializer().loads(token, max_age=app.config["TOKEN_TTL_SECONDS"])
             except SignatureExpired:
+                logger.warning(
+                    "auth_failure reason=token_expired ip=%s path=%s",
+                    request.remote_addr, request.path
+                )
                 return _auth_error("Token expired")
             except BadSignature:
+                logger.warning(
+                    "auth_failure reason=invalid_token ip=%s path=%s",
+                    request.remote_addr, request.path
+                )
                 return _auth_error("Invalid token")
+
             g.user = {"id": int(data["uid"]), "login": data["login"], "email": data.get("email")}
+            logger.info(
+                "auth_success user_id=%s login=%s ip=%s path=%s",
+                g.user["id"], g.user["login"], request.remote_addr, request.path
+            )
             return f(*args, **kwargs)
         return wrapper
 
@@ -163,6 +183,10 @@ def create_app():
         email = (payload.get("email") or "").strip()
         password = payload.get("password") or ""
         if not email or not password:
+            logger.warning(
+                "login_failure reason=missing_credentials ip=%s",
+                request.remote_addr
+            )
             return jsonify({"error": "email and password are required"}), 400
 
         try:
@@ -172,14 +196,26 @@ def create_app():
                     {"email": email},
                 ).first()
         except Exception as e:
+            logger.error(
+                "login_failure reason=database_error email=%s ip=%s error=%s",
+                email, request.remote_addr, str(e)
+            )
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row or not check_password_hash(row.hpassword, password):
+            logger.warning(
+                "login_failure reason=invalid_credentials email=%s ip=%s",
+                email, request.remote_addr
+            )
             return jsonify({"error": "invalid credentials"}), 401
 
         token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
+        logger.info(
+            "login_success user_id=%s login=%s email=%s ip=%s",
+            row.id, row.login, row.email, request.remote_addr
+        )
         return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
-
+       
     # POST /api/upload-document  (multipart/form-data)
     @app.post("/api/upload-document")
     @require_auth
@@ -468,8 +504,9 @@ def create_app():
         return fp
 
     # DELETE /api/delete-document  (and variants)
-    @app.route("/api/delete-document", methods=["DELETE", "POST"])  # POST supported for convenience
+    @app.route("/api/delete-document", methods=["DELETE", "POST"])
     @app.route("/api/delete-document/<document_id>", methods=["DELETE"])
+    @require_auth
     def delete_document(document_id: int | None = None):
         # accept id from path, query (?id= / ?documentid=), or JSON body on POST
         if not document_id:
@@ -487,8 +524,12 @@ def create_app():
         try:
             with get_engine().connect() as conn:
 
-                query = text("SELECT * FROM Documents WHERE id = :id")
-                row = conn.execute(query, {"id": int(doc_id)}).first()
+                query = text("""
+                SELECT * 
+                FROM Documents 
+                WHERE id = :id AND ownerid = :uid
+                """)
+                row = conn.execute(query, {"id": int(doc_id), "uid": int(g.user["id"])}).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
@@ -523,7 +564,7 @@ def create_app():
                 # If your schema does NOT have ON DELETE CASCADE on Version.documentid,
                 # uncomment the next line first:
                 # conn.execute(text("DELETE FROM Version WHERE documentid = :id"), {"id": doc_id})
-                conn.execute(text("DELETE FROM Documents WHERE id = :id"), {"id": int(doc_id)})
+                conn.execute(text("DELETE FROM Documents WHERE id = :id AND ownerid = :uid"), {"id": int(doc_id), "uid": int(g.user["id"])})
         except Exception as e:
             return jsonify({"error": f"database error during delete: {str(e)}"}), 503
 
@@ -541,25 +582,25 @@ def create_app():
     @app.post("/api/create-watermark/<int:document_id>")
     @require_auth
     def create_watermark(document_id: int | None = None):
-        # accept id from path, query (?id= / ?documentid=), or JSON body on GET
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "JSON body must be an object"}), 400
+
+        # accept id from path, query (?id= / ?documentid=), or JSON body
         if not document_id:
             document_id = (
                 request.args.get("id")
                 or request.args.get("documentid")
+                or payload.get("id")
             )
-            if not document_id:
-                body = request.get_json(silent=True)
-                if not isinstance(body, dict):
-                    return jsonify({"error": "JSON body must be an object"}), 400
-                document_id = body.get("id")
         try:
-            doc_id = document_id
+            doc_id = int(document_id)
         except (TypeError, ValueError):
+            logger.warning(
+                "watermark_create_failure reason=invalid_document_id user_id=%s ip=%s",
+                g.user["id"], request.remote_addr
+            )
             return jsonify({"error": "document id required"}), 400
-     
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict):
-            return jsonify({"error": "JSON body must be an object"}), 400
 
         method = payload.get("method")
         intended_for = payload.get("intended_for")
@@ -567,30 +608,52 @@ def create_app():
         secret = payload.get("secret")
         key = payload.get("key")
 
-        # validate input
-        try:
-            doc_id = int(doc_id)
-        except (TypeError, ValueError):
-            return jsonify({"error": "document_id (int) is required"}), 400
         if not method or not intended_for or not isinstance(secret, str) or not isinstance(key, str):
+            logger.warning(
+                "watermark_create_failure reason=missing_parameters document_id=%s user_id=%s ip=%s",
+                doc_id, g.user["id"], request.remote_addr
+            )
             return jsonify({"error": "method, intended_for, secret, and key are required"}), 400
 
-        return create_version(doc_id, method, intended_for, position, secret, key)
+        logger.info(
+            "watermark_create_attempt document_id=%s method=%s intended_for=%s user_id=%s ip=%s",
+            doc_id, method, intended_for, g.user["id"], request.remote_addr
+        )
 
-    def create_version(doc_id, method, intended_for, position, secret, key, *, rmap_link=None):
-        """Shared watermark/Versions pipeline; RMAP supplies its protocol link."""
-        # lookup the document; enforce ownership
+        return create_version(
+            doc_id, method, intended_for, position, secret, key,
+            owner_id=g.user["id"]
+        )
+
+    def create_version(doc_id, method, intended_for, position, secret, key, *, rmap_link=None, owner_id=None):
+        """Shared watermark/Versions pipeline; RMAP supplies its protocol link.
+        
+        owner_id: if set, enforce that the document belongs to this user.
+        RMAP calls pass owner_id=None.
+        """
+        # lookup the document; enforce ownership when owner_id is given
         try:
             with get_engine().connect() as conn:
-                row = conn.execute(
-                    text("""
-                        SELECT id, name, path
-                        FROM Documents
-                        WHERE id = :id
-                        LIMIT 1
-                    """),
-                    {"id": doc_id},
-                ).first()
+                if owner_id is not None:
+                    row = conn.execute(
+                        text("""
+                            SELECT id, name, path
+                            FROM Documents
+                            WHERE id = :id AND ownerid = :uid
+                            LIMIT 1
+                        """),
+                        {"id": doc_id, "uid": int(owner_id)},
+                    ).first()
+                else:
+                    row = conn.execute(
+                        text("""
+                            SELECT id, name, path
+                            FROM Documents
+                            WHERE id = :id
+                            LIMIT 1
+                        """),
+                        {"id": doc_id},
+                    ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
@@ -687,6 +750,11 @@ def create_app():
                 pass
             return jsonify({"error": f"database error during version insert: {e}"}), 503
 
+        logger.info(
+            "watermark_created document_id=%s version_id=%s link=%s method=%s intended_for=%s user_id=%s",
+            doc_id, vid, link_token, method, intended_for, owner_id
+        )
+
         return jsonify({
             "id": vid,
             "documentid": doc_id,
@@ -704,27 +772,45 @@ def create_app():
     def publish_rmap_version(doc_id, identity, link):
         result, status = create_version(
             doc_id, "combined-watermark", identity, None,
-            # Keep the QR payload readable; its encoded envelope is much
-            # longer than the embedded secret itself. The RMAP link is unchanged.
-            secrets.token_hex(8), app.config["RMAP_WATERMARK_KEY"], rmap_link=link,
+            secrets.token_hex(8), app.config["RMAP_WATERMARK_KEY"],
+            rmap_link=link,
+            owner_id=None,   # RMAP has no logged-in user
         )
         if status != 201:
             raise RMAPPublicationError()
 
     def handle_rmap(initiate):
+        action = "initiate" if initiate else "get_link"
         try:
             service = get_rmap_service()
-        except Exception:
+        except Exception as e:
+            logger.error(
+                "rmap_failure action=%s reason=not_configured ip=%s error=%s",
+                action, request.remote_addr, str(e)
+            )
             return jsonify({"error": "RMAP is not configured correctly"}), 503
+
         try:
             message = request.get_json(silent=True)
             response = (service.initiate(message) if initiate else
                         service.get_link(message, publish_rmap_version))
+            logger.info(
+                "rmap_success action=%s ip=%s",
+                action, request.remote_addr
+            )
             return jsonify(response), 200
-        except (RMAPError, InvalidRMAPMessage, KeyError, TypeError, ValueError):
+        except (RMAPError, InvalidRMAPMessage, KeyError, TypeError, ValueError) as e:
+            logger.warning(
+                "rmap_failure action=%s reason=invalid_message_or_session ip=%s error=%s",
+                action, request.remote_addr, str(e)
+            )
             return jsonify({"error": "Invalid RMAP message or session"}), 400
-        except Exception:
+        except Exception as e:
             # Never return prepared ciphertext if PDF creation/commit fails.
+            logger.error(
+                "rmap_failure action=%s reason=internal_error ip=%s error=%s",
+                action, request.remote_addr, str(e)
+            )
             return jsonify({"error": "RMAP request could not be completed"}), 503
 
     @app.post("/api/rmap-initiate")
@@ -846,16 +932,16 @@ def create_app():
         if not method or not isinstance(key, str):
             return jsonify({"error": "method, and key are required"}), 400
 
-        # lookup the document; FIXME enforce ownership
+        # lookup the document; FIXME enforce ownership: check
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
                     text("""
                         SELECT id, name, path
                         FROM Documents
-                        WHERE id = :id
+                        WHERE id = :id AND ownerid = :uid
                     """),
-                    {"id": doc_id},
+                    {"id": doc_id, "uid": int(g.user["id"])},
                 ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
