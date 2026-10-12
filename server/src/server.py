@@ -557,6 +557,10 @@ def create_app():
         except (TypeError, ValueError):
             return jsonify({"error": "document id required"}), 400
      
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "JSON body must be an object"}), 400
+
         method = payload.get("method")
         intended_for = payload.get("intended_for")
         position = payload.get("position") or None
