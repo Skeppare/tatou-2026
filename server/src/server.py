@@ -231,7 +231,7 @@ def create_app():
         if file.mimetype != "application/pdf":
             return jsonify({"error": "invalid file type"}), 400
 
-        fname = file.filename
+        fname = secure_filename(file.filename) #changed to secure_filename to avoid issues with special characters
 
         user_dir = app.config["STORAGE_DIR"] / "files" / g.user["login"]
         user_dir.mkdir(parents=True, exist_ok=True)
@@ -634,6 +634,7 @@ def create_app():
         # lookup the document; enforce ownership when owner_id is given
         try:
             with get_engine().connect() as conn:
+
                 if owner_id is not None:
                     row = conn.execute(
                         text("""
@@ -654,6 +655,17 @@ def create_app():
                         """),
                         {"id": doc_id},
                     ).first()
+
+                row = conn.execute(
+                    text("""
+                        SELECT id, name, path
+                        FROM Documents
+                        WHERE id = :id AND ownerid = :uid
+                        LIMIT 1
+                    """),
+                    {"id": doc_id, "uid": int(g.user["id"])},
+                ).first()
+ 
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
