@@ -37,7 +37,7 @@ from rmap import RMAPError
 #from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
 
 def rate_limit(f):
-    wraps(f)
+    @wraps(f)
     def wrapper(*args, **kwargs):
         ip = request.remote_addr or "unknown"
         now = time()
@@ -490,7 +490,7 @@ def create_app():
 
         logger.info(
             "version_downloaded link=%s intended_for=%s document_id=%s ip=%s",
-            link, row.intended_for, row.document_id, request.remote_addr
+            link, row.intended_for, row.documentid, request.remote_addr
         )
 
         file_path = Path(row.path)
@@ -689,16 +689,6 @@ def create_app():
                         """),
                         {"id": doc_id},
                     ).first()
-
-                row = conn.execute(
-                    text("""
-                        SELECT id, name, path
-                        FROM Documents
-                        WHERE id = :id AND ownerid = :uid
-                        LIMIT 1
-                    """),
-                    {"id": doc_id, "uid": int(g.user["id"])},
-                ).first()
  
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
