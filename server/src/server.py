@@ -8,6 +8,12 @@ logger = logging.getLogger("tatou.security")
 from threading import Lock
 from pathlib import Path
 from functools import wraps
+from collections import defaultdict
+from time import time
+
+_rate_limit_store = defaultdict(list) 
+RATE_LIMIT_MAX = 10
+RATE:LIMIT_WINDOW = 300
 
 from flask import Flask, jsonify, request, g, send_file
 from werkzeug.utils import secure_filename
@@ -29,6 +35,24 @@ from watermarking_method import WatermarkingMethod
 from rmap_service import RMAPService, InvalidRMAPMessage
 from rmap import RMAPError
 #from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
+
+def rate_limit(f):
+    wraps(f)
+    def wrapper(*args, **kwargs):
+        ip = request.remote_addr or "unknown"
+        now = time()
+        #rensa gamla timestamps
+        _rate_limit_store[ip] = [t for t in _rate_limit_store[ip] if now - t < RATE_LIMIT_WINDOW]
+        if len (_rate_limit_store[ip]) >= RATE_LIMIT_MAX:
+            logger.warning(
+                "rate_limit_exceeded ip=%s path=%s",
+                ip, request.path
+            )
+            return jsonify({"error": "rate limit exceeded"}), 429
+        _rate_limit_store[ip].append(now)
+        return f(*args, **kwargs)
+    return wrapper
+
 
 def create_app():
     app = Flask(__name__)
@@ -178,6 +202,7 @@ def create_app():
 
     # POST /api/login {login, password}
     @app.post("/api/login")
+    @rate_limit
     def login():
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip()
@@ -457,7 +482,16 @@ def create_app():
 
         # Don’t leak whether a doc exists for another user
         if not row:
+            logger.warning(
+                "version_download_failure reason=not_found link=%s ip=%s",
+                link, request.remote_addr
+            )
             return jsonify({"error": "document not found"}), 404
+
+        logger.info(
+            "version_downloaded link=%s intended_for=%s document_id=%s ip=%s",
+            link, row.intended_for, row.document_id, request.remote_addr
+        )
 
         file_path = Path(row.path)
 
@@ -827,11 +861,13 @@ def create_app():
 
     @app.post("/api/rmap-initiate")
     @app.post("/rmap-initiate")
+    @rate_limit
     def rmap_initiate():
         return handle_rmap(True)
 
     @app.post("/api/rmap-get-link")
     @app.post("/rmap-get-link")
+    @rate_limit
     def rmap_get_link():
         return handle_rmap(False)
         
