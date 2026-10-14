@@ -13,7 +13,7 @@ from time import time
 
 _rate_limit_store = defaultdict(list) 
 RATE_LIMIT_MAX = 10
-RATE:LIMIT_WINDOW = 300
+RATE_LIMIT_WINDOW = 300
 
 from flask import Flask, jsonify, request, g, send_file
 from werkzeug.utils import secure_filename
