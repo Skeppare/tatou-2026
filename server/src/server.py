@@ -198,6 +198,10 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
+        logger.info(
+            "user_created user_id=%s login=%s email=%s ip=%s",
+            uid, login, email, request.remote_addr
+        )
         return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
     # POST /api/login {login, password}
@@ -297,6 +301,10 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
+        logger.info(
+            "document_uploaded document_id=%s name=%s user_id=%s ip=%s",
+            did, final_name, g.user["id"], request.remote_addr
+        )
         return jsonify({
             "id": int(row.id),
             "name": row.name,
