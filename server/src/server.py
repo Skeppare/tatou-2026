@@ -694,6 +694,11 @@ def create_app():
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
+            if owner_id is not None:
+                logger.warning(
+                    "watermark_access_denied document_id=%s user_id=%s ip=%s",
+                    doc_id, owner_id, request.remote_addr
+                )
             return jsonify({"error": "document not found"}), 404
 
         # resolve path safely under STORAGE_DIR
