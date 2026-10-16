@@ -9,7 +9,7 @@ logger = logging.getLogger("tatou.security")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
     logger.addHandler(handler)
 from threading import Lock
 from pathlib import Path
@@ -413,6 +413,13 @@ def create_app():
             "intended_for": r.intended_for,
             "method": r.method,
         } for r in rows]
+
+        # Ny loggrad
+        logger.info(
+            "list_all_versions user_id=%s login=%s ip=%s count=%s",
+            g.user["id"], g.user["login"], request.remote_addr, len(versions)
+        )
+
         return jsonify({"versions": versions}), 200
     
     # GET /api/get-document or /api/get-document/<id>  → returns the PDF (inline)
