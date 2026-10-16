@@ -4,7 +4,13 @@ import hashlib
 import secrets
 import datetime as dt
 import logging
+import logging
 logger = logging.getLogger("tatou.security")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
 from threading import Lock
 from pathlib import Path
 from functools import wraps
