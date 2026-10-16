@@ -589,6 +589,10 @@ def create_app():
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
+            logger.warning(
+                "delete_access_denied document_id=%s user_id=%s ip=%s",
+                doc_id, g.user["id"], request.remote_addr
+            )
             # Don’t reveal others’ docs—just say not found
             return jsonify({"error": "document not found"}), 404
 
@@ -623,6 +627,10 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"database error during delete: {str(e)}"}), 503
 
+        logger.info(
+            "document_deleted document_id=%s user_id=%s ip=%s",
+            doc_id, g.user["id"], request.remote_addr
+        )
         return jsonify({
             "deleted": True,
             "id": doc_id,
