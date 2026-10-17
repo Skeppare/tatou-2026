@@ -4,10 +4,22 @@ import hashlib
 import secrets
 import datetime as dt
 import logging
+import logging
 logger = logging.getLogger("tatou.security")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    logger.addHandler(handler)
 from threading import Lock
 from pathlib import Path
 from functools import wraps
+from collections import defaultdict
+from time import time
+
+_rate_limit_store = defaultdict(list) 
+RATE_LIMIT_MAX = 10
+RATE_LIMIT_WINDOW = 300
 
 from flask import Flask, jsonify, request, g, send_file
 from werkzeug.utils import secure_filename
@@ -29,6 +41,24 @@ from watermarking_method import WatermarkingMethod
 from rmap_service import RMAPService, InvalidRMAPMessage
 from rmap import RMAPError
 #from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
+
+def rate_limit(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        ip = request.remote_addr or "unknown"
+        now = time()
+        #rensa gamla timestamps
+        _rate_limit_store[ip] = [t for t in _rate_limit_store[ip] if now - t < RATE_LIMIT_WINDOW]
+        if len (_rate_limit_store[ip]) >= RATE_LIMIT_MAX:
+            logger.warning(
+                "rate_limit_exceeded ip=%s path=%s",
+                ip, request.path
+            )
+            return jsonify({"error": "rate limit exceeded"}), 429
+        _rate_limit_store[ip].append(now)
+        return f(*args, **kwargs)
+    return wrapper
+
 
 def create_app():
     app = Flask(__name__)
@@ -174,10 +204,15 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
+        logger.info(
+            "user_created user_id=%s login=%s email=%s ip=%s",
+            uid, login, email, request.remote_addr
+        )
         return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
     # POST /api/login {login, password}
     @app.post("/api/login")
+    @rate_limit
     def login():
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip()
@@ -272,6 +307,10 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
+        logger.info(
+            "document_uploaded document_id=%s name=%s user_id=%s ip=%s",
+            did, final_name, g.user["id"], request.remote_addr
+        )
         return jsonify({
             "id": int(row.id),
             "name": row.name,
@@ -374,6 +413,13 @@ def create_app():
             "intended_for": r.intended_for,
             "method": r.method,
         } for r in rows]
+
+        # Ny loggrad
+        logger.info(
+            "list_all_versions user_id=%s login=%s ip=%s count=%s",
+            g.user["id"], g.user["login"], request.remote_addr, len(versions)
+        )
+
         return jsonify({"versions": versions}), 200
     
     # GET /api/get-document or /api/get-document/<id>  → returns the PDF (inline)
@@ -457,7 +503,16 @@ def create_app():
 
         # Don’t leak whether a doc exists for another user
         if not row:
+            logger.warning(
+                "version_download_failure reason=not_found link=%s ip=%s",
+                link, request.remote_addr
+            )
             return jsonify({"error": "document not found"}), 404
+
+        logger.info(
+            "version_downloaded link=%s intended_for=%s document_id=%s ip=%s",
+            link, row.intended_for, row.documentid, request.remote_addr
+        )
 
         file_path = Path(row.path)
 
@@ -534,6 +589,10 @@ def create_app():
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
+            logger.warning(
+                "delete_access_denied document_id=%s user_id=%s ip=%s",
+                doc_id, g.user["id"], request.remote_addr
+            )
             # Don’t reveal others’ docs—just say not found
             return jsonify({"error": "document not found"}), 404
 
@@ -568,6 +627,10 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"database error during delete: {str(e)}"}), 503
 
+        logger.info(
+            "document_deleted document_id=%s user_id=%s ip=%s",
+            doc_id, g.user["id"], request.remote_addr
+        )
         return jsonify({
             "deleted": True,
             "id": doc_id,
@@ -655,21 +718,16 @@ def create_app():
                         """),
                         {"id": doc_id},
                     ).first()
-
-                row = conn.execute(
-                    text("""
-                        SELECT id, name, path
-                        FROM Documents
-                        WHERE id = :id AND ownerid = :uid
-                        LIMIT 1
-                    """),
-                    {"id": doc_id, "uid": int(g.user["id"])},
-                ).first()
  
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
+            if owner_id is not None:
+                logger.warning(
+                    "watermark_access_denied document_id=%s user_id=%s ip=%s",
+                    doc_id, owner_id, request.remote_addr
+                )
             return jsonify({"error": "document not found"}), 404
 
         # resolve path safely under STORAGE_DIR
@@ -827,11 +885,13 @@ def create_app():
 
     @app.post("/api/rmap-initiate")
     @app.post("/rmap-initiate")
+    @rate_limit
     def rmap_initiate():
         return handle_rmap(True)
 
     @app.post("/api/rmap-get-link")
     @app.post("/rmap-get-link")
+    @rate_limit
     def rmap_get_link():
         return handle_rmap(False)
         
