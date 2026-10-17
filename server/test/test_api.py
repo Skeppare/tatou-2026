@@ -1,5 +1,8 @@
 from itsdangerous import URLSafeTimedSerializer
+from unittest.mock import MagicMock
+from flask import g
 from server import app
+import io
 
 def test_healthz_route():
     client = app.test_client()
@@ -68,3 +71,34 @@ def test_create_watermark_body_id_rejects_invalid_json():
 
     assert response.status_code == 400
     assert response.get_json()["error"] == "JSON body must be an object"
+
+
+def test_upload_document_when_filename_not_empty():
+    view = app.view_functions["upload_document"]
+
+    with app.test_request_context(
+        "/api/upload-document",
+        method="POST",
+        data={"file":(io.BytesIO(b"not a pdf"), "test.pdf", "text/plain")},
+        content_type="multipart/form-data", 
+    ):
+        response, status = view.__wrapped__()
+
+    assert status == 400
+    assert response.get_json()["error"] == "invalid file type"
+
+
+def test_get_document_returns_404_when_not_owned(monkeypatch):
+    engine = MagicMock()
+
+    engine.connect.return_value.__enter__.return_value.execute.return_value.first.return_value = None
+
+    monkeypatch.setitem(app.config, "_ENGINE", engine)
+
+    with app.test_request_context(
+        "/api/get-document/13"):
+        g.user = {"id":31}
+        response, status = app.view_functions["get_document"].__wrapped__(13)
+
+    assert status == 404
+    assert response.get_json()["error"] == "document not found"

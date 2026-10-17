@@ -1,0 +1,8 @@
+[cosmic-ray]
+module-path = "src/server.py"
+timeout = 30.0
+excluded-modules = []
+test-command = "pytest -x -q test/test_api.py"
+
+[cosmic-ray.distributor]
+name = "local"
