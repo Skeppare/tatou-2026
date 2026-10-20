@@ -270,6 +270,30 @@ def test_existing_watermark_route_uses_shared_pipeline(app):
     assert row["link"] == response.json["link"]
     assert wm.read_watermark("invisible-text", row["path"], "synthetic test key") == "synthetic watermark"
 
+def test_create_watermark_body_id_success(app):
+    token = URLSafeTimedSerializer(
+        app.config["SECRET_KEY"],
+        salt="tatou-auth"
+    ).dumps({
+        "uid": 1,
+        "login": "owner",
+        "email":"owner@example.test"
+    })
+
+    response = app.test_client().post(
+        "/api/create-watermark",
+        json={
+            "id": 1,
+            "method": "invisible-text",
+            "intended_for": "reader",
+            "position": "0",
+            "secret": "synthetic watermark",
+            "key": "synthetic test key",
+        },
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 201
 
 def test_concurrent_message2_publishes_only_once(app, keys):
     client = initiate(app, keys)
