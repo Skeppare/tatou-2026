@@ -102,3 +102,102 @@ def test_get_document_returns_404_when_not_owned(monkeypatch):
 
     assert status == 404
     assert response.get_json()["error"] == "document not found"
+
+
+def test_create_user_requires_fields():
+    client = app.test_client()
+
+    response = client.post(
+        "/api/create-user",
+        json={}
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+
+def test_login_requires_credentials():
+    client = app.test_client()
+
+    response = client.post(
+        "/api/login",
+        json={}
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+
+def test_list_documents_requires_authentication():
+    client = app.test_client()
+
+    response = client.get("/api/list-documents")
+
+    assert response.status_code == 401
+
+def test_list_versions_requires_authentication():
+    client = app.test_client()
+
+    response = client.get("/api/list-versions")
+
+    assert response.status_code == 401
+
+def test_list_versions_by_id_requires_authentication():
+    client = app.test_client()
+
+    response = client.get("/api/list-versions/1")
+
+    assert response.status_code == 401
+
+def test_list_all_versions_requires_authentication():
+    client = app.test_client()
+
+    response = client.get("/api/list-all-versions")
+
+    assert response.status_code == 401
+
+def test_get_document_without_id_requires_authentication():
+    client = app.test_client()
+
+    response = client.get("/api/get-document")
+
+    assert response.status_code == 401
+
+def test_delete_document_without_id_requires_authentication():
+    client = app.test_client()
+
+    response = client.delete("/api/delete-document")
+
+    assert response.status_code == 401
+
+def test_delete_document_post_requires_authentication():
+    client = app.test_client()
+
+    response = client.post("/api/delete-document", json={"id": 1})
+
+    assert response.status_code == 401
+
+def test_read_watermark_requires_authentication():
+    client = app.test_client()
+
+    response = client.post("/api/read-watermark", 
+                           json={
+                               "id": 1,
+                               "method":"toy-eof",
+                               "key":"test"
+                               }
+                            )
+    
+
+    assert response.status_code == 401
+
+def test_read_watermark_by_id_requires_authentication():
+    client = app.test_client()
+
+    response = client.post("/api/read-watermark/1", 
+                           json={
+                               "method":"toy-eof",
+                               "key":"test"
+                               }
+                            )
+    
+
+    assert response.status_code == 401
