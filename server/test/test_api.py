@@ -181,7 +181,7 @@ def test_read_watermark_requires_authentication():
     response = client.post("/api/read-watermark", 
                            json={
                                "id": 1,
-                               "method":"toy-eof",
+                               "method":"invisible-text",
                                "key":"test"
                                }
                             )
@@ -194,7 +194,7 @@ def test_read_watermark_by_id_requires_authentication():
 
     response = client.post("/api/read-watermark/1", 
                            json={
-                               "method":"toy-eof",
+                               "method":"invisible-text",
                                "key":"test"
                                }
                             )
