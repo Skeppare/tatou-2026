@@ -9,6 +9,7 @@ import secrets
 
 import pymupdf
 import pytest
+import server as server_module
 from itsdangerous import URLSafeTimedSerializer
 from rmap import RMAPClient
 from rmap.crypto import encrypt_json
@@ -17,6 +18,11 @@ from sqlalchemy import create_engine, event, text
 
 import watermarking_utils as wm
 
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    server_module._rate_limit_store.clear()
+    yield
+    server_module._rate_limit_store.clear()
 
 @pytest.fixture(scope="module")
 def keys(tmp_path_factory):
@@ -36,6 +42,7 @@ def keys(tmp_path_factory):
 @pytest.fixture
 def app(tmp_path, monkeypatch, keys):
     monkeypatch.setenv("STORAGE_DIR", str(tmp_path))
+    monkeypatch.setenv("RMAP_WATERMARK_KEY", "test-watermark-key") 
     from server import create_app
 
     application = create_app()
@@ -51,12 +58,12 @@ def app(tmp_path, monkeypatch, keys):
         pdf.new_page().insert_text((72, 72), "Synthetic confidential document")
         pdf.save(tmp_path / "assigned.pdf")
     with engine.begin() as conn:
-        conn.execute(text("CREATE TABLE Documents (id INTEGER PRIMARY KEY, name TEXT, path TEXT)"))
+        conn.execute(text("CREATE TABLE Documents (id INTEGER PRIMARY KEY, name TEXT, path TEXT, ownerid INTEGER)"))
         conn.execute(text("""CREATE TABLE Versions (
             id INTEGER PRIMARY KEY, documentid INTEGER NOT NULL, link TEXT UNIQUE NOT NULL,
             intended_for TEXT, secret TEXT NOT NULL, method TEXT NOT NULL, position TEXT, path TEXT NOT NULL
         )"""))
-        conn.execute(text("INSERT INTO Documents VALUES (1, 'assigned.pdf', :path)"),
+        conn.execute(text("INSERT INTO Documents VALUES (1, 'assigned.pdf', :path, 1)"),
                      {"path": str(tmp_path / "assigned.pdf")})
     application.config.update(
         TESTING=True, _ENGINE=engine, SECRET_KEY=secrets.token_hex(32),
@@ -98,7 +105,7 @@ def test_handshake_publishes_group_specific_pdf(app, keys, prefix):
         assert link == client.expected_link and len(link) == 32
         row = versions(app)[-1]
         assert row["link"] == link and row["intended_for"] == identity
-        assert row["documentid"] == 1 and row["method"] == "invisible-text"
+        assert row["documentid"] == 1 and row["method"] == "combined-watermark"
         download = app.test_client().get(f"/api/get-version/{link}")
         assert download.status_code == 200
         assert wm.read_watermark("invisible-text", download.data, "") == row["secret"]
@@ -253,15 +260,40 @@ def test_existing_watermark_route_uses_shared_pipeline(app):
         {"uid": 1, "login": "owner", "email": "owner@example.test"}
     )
     response = app.test_client().post("/api/create-watermark/1", json={
-        "method": "toy-eof", "intended_for": "reader", "position": "",
+        "method": "invisible-text", "intended_for": "reader", "position": "",
         "secret": "synthetic watermark", "key": "synthetic test key",
     }, headers={"Authorization": f"Bearer {token}"})
+    
     assert response.status_code == 201
     assert response.json["filename"] == "assigned__reader.pdf"
     row = versions(app)[0]
     assert row["link"] == response.json["link"]
-    assert wm.read_watermark("toy-eof", row["path"], "synthetic test key") == "synthetic watermark"
+    assert wm.read_watermark("invisible-text", row["path"], "synthetic test key") == "synthetic watermark"
 
+def test_create_watermark_body_id_success(app):
+    token = URLSafeTimedSerializer(
+        app.config["SECRET_KEY"],
+        salt="tatou-auth"
+    ).dumps({
+        "uid": 1,
+        "login": "owner",
+        "email":"owner@example.test"
+    })
+
+    response = app.test_client().post(
+        "/api/create-watermark",
+        json={
+            "id": 1,
+            "method": "invisible-text",
+            "intended_for": "reader",
+            "position": "0",
+            "secret": "synthetic watermark",
+            "key": "synthetic test key",
+        },
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 201
 
 def test_concurrent_message2_publishes_only_once(app, keys):
     client = initiate(app, keys)
